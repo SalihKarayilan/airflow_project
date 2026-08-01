@@ -18,7 +18,7 @@ def transfer_baseline_unmasked():
     batch_size = 10000
     
     try:
-        logging.info("Baseline aktarımı için bağlantılar kuruluyor...")
+        logging.info("Baseline 10M aktarımı için bağlantılar kuruluyor...")
         
         mongo_hook = MongoHook(conn_id='mongo_default')
         mongo_client = mongo_hook.get_conn()
@@ -28,7 +28,26 @@ def transfer_baseline_unmasked():
         pg_conn = postgres_hook.get_conn()
         pg_cursor = pg_conn.cursor()
 
-        # Yeni "Unmasked" Tablosunu Temizle
+        # 2. 10M Şemayı ve Tabloyu Otomatik Oluştur (Yoksa)
+        logging.info("masked_10m şeması ve unmasked_10m_customers tablosu kontrol ediliyor/oluşturuluyor...")
+        pg_cursor.execute("""
+            CREATE SCHEMA IF NOT EXISTS masked_10m;
+            
+            CREATE TABLE IF NOT EXISTS masked_10m.unmasked_10m_customers (
+                mongo_id VARCHAR(50),
+                musteri_id VARCHAR(100),
+                ad_soyad VARCHAR(255),
+                tckn VARCHAR(50),
+                email VARCHAR(255),
+                telefon VARCHAR(100),
+                kredi_karti VARCHAR(100),
+                bakiye NUMERIC(12, 2),
+                kayit_tarihi TIMESTAMP
+            );
+        """)
+        pg_conn.commit()
+
+        # 3. Var olan eski verileri temizle
         logging.info("unmasked_10m_customers tablosu temizleniyor...")
         pg_cursor.execute("TRUNCATE TABLE masked_10m.unmasked_10m_customers;")
         pg_conn.commit()
@@ -38,12 +57,11 @@ def transfer_baseline_unmasked():
         batch_data = []
         total_inserted = 0
 
-        # 2. Veri Aktarımı (Maskeleme/Şifreleme YOK)
+        # 4. Veri Aktarımı (Maskeleme/Şifreleme YOK)
         for doc in mongo_cursor:
-            # MongoDB'deki Türkçe alan adlarını doğrudan alıyoruz
             raw_record = (
                 str(doc.get('_id', '')),
-                doc.get('musteri_id', ''),
+                str(doc.get('musteri_id', '')),
                 doc.get('ad_soyad', ''),
                 doc.get('tckn', ''),
                 doc.get('email', ''),
@@ -80,7 +98,7 @@ def transfer_baseline_unmasked():
         pg_cursor.close()
         pg_conn.close()
         
-        # 3. Performans Raporu Oluşturma
+        # 5. Performans Raporu Oluşturma
         end_time = time.time()
         end_mem = process.memory_info().rss / (1024 * 1024)
         
@@ -89,17 +107,17 @@ def transfer_baseline_unmasked():
         mem_diff = end_mem - start_mem
 
         logging.info("==================================================")
-        logging.info("📊 TEZ ANALİZİ: BASELINE (SIFIR GÜVENLİK MALİYETİ)")
+        logging.info("📊 TEZ ANALİZİ: BASELINE 10M (SIFIR GÜVENLİK MALİYETİ)")
         logging.info("==================================================")
-        logging.info(f"Hedef Tablo:    unmasked_10m_customers")
+        logging.info(f"Hedef Tablo:     unmasked_10m_customers")
         logging.info(f"Aktarılan Satır: {total_inserted}")
-        logging.info(f"Geçen Süre:     {duration:.2f} saniye")
+        logging.info(f"Geçen Süre:      {duration:.2f} saniye")
         logging.info(f"Hız (Throughput): {throughput:.2f} satır/sn")
         logging.info(f"RAM Kullanımı:   {mem_diff:.2f} MB")
         logging.info("==================================================")
 
     except Exception as e:
-        logging.error(f"Baseline aktarımı başarısız: {str(e)}")
+        logging.error(f"Baseline 10M aktarımı başarısız: {str(e)}")
         raise
 
 # DAG Ayarları
@@ -113,7 +131,7 @@ with DAG(
     default_args=default_args,
     schedule_interval=None,
     catchup=False,
-    tags=['tez', 'unmasked', 'baseline']
+    tags=['tez', 'unmasked', 'baseline', '10M']
 ) as dag:
 
     transfer_task = PythonOperator(
