@@ -1,5 +1,7 @@
 version: '3.8'
+
 services:
+  # 1. AIRFLOW METADATA VERİTABANI (Eski dosyanın aynısı)
   postgres:
     image: postgres:13
     container_name: airflow-postgres
@@ -9,7 +11,36 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - airflow_network
 
+  # 2. KAYNAK VERİTABANI: YEREL MONGODB (Eski Atlas Kümesinin Yerine)
+  mongo_source:
+    image: mongo:latest
+    container_name: local_mongo_cluster
+    ports:
+      - "27017:27017"
+    volumes:
+      - pg_mongo_data:/data/db
+    networks:
+      - airflow_network
+
+  # 3. HEDEF VERİTABANI: YEREL POSTGRESQL (Eski GCP Postgres Yerine)
+  postgres_target:
+    image: postgres:13
+    container_name: local_postgres_dwh
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow_pass
+      POSTGRES_DB: company_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_postgres_target_data:/var/lib/postgresql/data
+    networks:
+      - airflow_network
+
+  # 4. AIRFLOW INIT
   airflow-init:
     image: apache/airflow:2.10.4
     container_name: airflow-init
@@ -25,9 +56,13 @@ services:
       - AIRFLOW_WWW_USER_PASSWORD=admin
       - AIRFLOW_WWW_USER_ROLE=Admin
       - AIRFLOW_WWW_USER_EMAIL=salih@hacettepe.edu.tr
-      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mongo==4.1.0 faker apache-airflow-providers-postgres
+      # psutil ve cryptography tezdeki performans analizi ve şifreleme için eklendi
+      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mongo==4.1.0 faker apache-airflow-providers-postgres psutil cryptography
     command: bash -c "airflow db migrate && airflow users create --username admin --firstname Salih --lastname Karayilan --role Admin --email salih@hacettepe.edu.tr --password admin"
+    networks:
+      - airflow_network
 
+  # 5. AIRFLOW WEBSERVER
   webserver:
     image: apache/airflow:2.10.4
     container_name: airflow-webserver
@@ -39,13 +74,16 @@ services:
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexgOOhDZni1UkKD3NmZj92RVWM3xcCg=
       - AIRFLOW__CORE__TEST_CONNECTION=Enabled
-      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mongo==4.1.0 faker apache-airflow-providers-postgres
+      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mongo==4.1.0 faker apache-airflow-providers-postgres psutil cryptography
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
     depends_on:
       - airflow-init
+    networks:
+      - airflow_network
 
+  # 6. AIRFLOW SCHEDULER
   scheduler:
     image: apache/airflow:2.10.4
     container_name: airflow-scheduler
@@ -54,12 +92,22 @@ services:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexgOOhDZni1UkKD3NmZj92RVWM3xcCg=
-      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mongo==4.1.0 faker apache-airflow-providers-postgres
+      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mongo==4.1.0 faker apache-airflow-providers-postgres psutil cryptography
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
     depends_on:
       - airflow-init
+    networks:
+      - airflow_network
 
+# Tüm konteynerlerin birbirleriyle isimleriyle (mongo_source vb.) konuşabilmesi için ortak ağ
+networks:
+  airflow_network:
+    driver: bridge
+
+# Disk üzerindeki verilerin kalıcı olması için tanımlı volume'ler
 volumes:
   postgres_data:
+  pg_mongo_data:
+  pg_postgres_target_data:
