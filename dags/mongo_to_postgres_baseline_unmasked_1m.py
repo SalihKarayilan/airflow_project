@@ -28,7 +28,26 @@ def transfer_baseline_unmasked():
         pg_conn = postgres_hook.get_conn()
         pg_cursor = pg_conn.cursor()
 
-        # Yeni "Unmasked" Tablosunu Temizle
+        # 2. Şema ve Tabloyu Otomatik Oluştur (Yoksa)
+        logging.info("Şema ve tablo varlığı kontrol ediliyor/oluşturuluyor...")
+        pg_cursor.execute("""
+            CREATE SCHEMA IF NOT EXISTS masked_1m;
+            
+            CREATE TABLE IF NOT EXISTS masked_1m.unmasked_1m_customers (
+                mongo_id VARCHAR(50),
+                musteri_id VARCHAR(100),
+                ad_soyad VARCHAR(255),
+                tckn VARCHAR(50),
+                email VARCHAR(255),
+                telefon VARCHAR(100),
+                kredi_karti VARCHAR(100),
+                bakiye NUMERIC(12, 2),
+                kayit_tarihi TIMESTAMP
+            );
+        """)
+        pg_conn.commit()
+
+        # 3. Var olan eski verileri temizle
         logging.info("unmasked_1m_customers tablosu temizleniyor...")
         pg_cursor.execute("TRUNCATE TABLE masked_1m.unmasked_1m_customers;")
         pg_conn.commit()
@@ -38,12 +57,11 @@ def transfer_baseline_unmasked():
         batch_data = []
         total_inserted = 0
 
-        # 2. Veri Aktarımı (Maskeleme/Şifreleme YOK)
+        # 4. Veri Aktarımı (Maskeleme/Şifreleme YOK)
         for doc in mongo_cursor:
-            # MongoDB'deki Türkçe alan adlarını doğrudan alıyoruz
             raw_record = (
                 str(doc.get('_id', '')),
-                doc.get('musteri_id', ''),
+                str(doc.get('musteri_id', '')),
                 doc.get('ad_soyad', ''),
                 doc.get('tckn', ''),
                 doc.get('email', ''),
@@ -80,7 +98,7 @@ def transfer_baseline_unmasked():
         pg_cursor.close()
         pg_conn.close()
         
-        # 3. Performans Raporu Oluşturma
+        # 5. Performans Raporu Oluşturma
         end_time = time.time()
         end_mem = process.memory_info().rss / (1024 * 1024)
         
@@ -91,9 +109,9 @@ def transfer_baseline_unmasked():
         logging.info("==================================================")
         logging.info("📊 TEZ ANALİZİ: BASELINE (SIFIR GÜVENLİK MALİYETİ)")
         logging.info("==================================================")
-        logging.info(f"Hedef Tablo:    unmasked_1m_customers")
+        logging.info(f"Hedef Tablo:     unmasked_1m_customers")
         logging.info(f"Aktarılan Satır: {total_inserted}")
-        logging.info(f"Geçen Süre:     {duration:.2f} saniye")
+        logging.info(f"Geçen Süre:      {duration:.2f} saniye")
         logging.info(f"Hız (Throughput): {throughput:.2f} satır/sn")
         logging.info(f"RAM Kullanımı:   {mem_diff:.2f} MB")
         logging.info("==================================================")
