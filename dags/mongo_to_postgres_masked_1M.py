@@ -137,4 +137,5 @@ with DAG(
     mask_and_load_task = PythonOperator(
         task_id='mask_and_load_to_postgres',
         python_callable=transfer_and_mask_data
+    )
     
