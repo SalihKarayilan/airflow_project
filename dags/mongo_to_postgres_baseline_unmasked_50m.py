@@ -27,6 +27,15 @@ def transfer_baseline_unmasked():
         postgres_hook = PostgresHook(postgres_conn_id='postgres_company_db')
         pg_conn = postgres_hook.get_conn()
         pg_cursor = pg_conn.cursor()
+        
+        # =========================================================================
+        # PERFORMANS VE ÖN BELLEK STABİLİZASYON AYARLARI
+        # =========================================================================
+        logging.info("PostgreSQL oturum parametreleri ayarlanıyor ve CHECKPOINT çalıştırılıyor...")
+        pg_cursor.execute("SET synchronous_commit = off;") # I/O darboğazını ölçüm için kararlı hale getirir
+        pg_cursor.execute("SET work_mem = '512MB';")
+        pg_cursor.execute("CHECKPOINT;") # Eski log birikintilerini diske yazıp temizler
+        pg_conn.commit()
 
         # 2. 50M Şemayı ve Tabloyu Otomatik Oluştur (Yoksa)
         logging.info("masked_50m şeması ve unmasked_50m_customers tablosu kontrol ediliyor/oluşturuluyor...")
@@ -107,7 +116,7 @@ def transfer_baseline_unmasked():
         mem_diff = end_mem - start_mem
 
         logging.info("==================================================")
-        logging.info("📊 TEZ ANALİZİ: BASELINE 50M (SIFIR GÜVENLİK MALİYETİ)")
+        logging.info("📊 ANALİZ: BASELINE 50M (SIFIR GÜVENLİK MALİYETİ)")
         logging.info("==================================================")
         logging.info(f"Hedef Tablo:     unmasked_50m_customers")
         logging.info(f"Aktarılan Satır: {total_inserted}")

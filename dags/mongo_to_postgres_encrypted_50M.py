@@ -52,6 +52,15 @@ def transfer_encrypted_dynamic(**kwargs):
         postgres_hook = PostgresHook(postgres_conn_id='postgres_company_db')
         pg_conn = postgres_hook.get_conn()
         pg_cursor = pg_conn.cursor()
+        
+        # =========================================================================
+        # PERFORMANS VE ÖN BELLEK STABİLİZASYON AYARLARI
+        # =========================================================================
+        logging.info("PostgreSQL oturum parametreleri ayarlanıyor ve CHECKPOINT çalıştırılıyor...")
+        pg_cursor.execute("SET synchronous_commit = off;") # I/O darboğazını ölçüm için kararlı hale getirir
+        pg_cursor.execute("SET work_mem = '512MB';")
+        pg_cursor.execute("CHECKPOINT;") # Eski log birikintilerini diske yazıp temizler
+        pg_conn.commit()
 
         # 2. 50m Şemayı ve Tabloyu Otomatik Oluştur (Yoksa)
         logging.info("masked_50m şeması ve encrypted_50m_customers tablosu kontrol ediliyor/oluşturuluyor...")
@@ -130,7 +139,7 @@ def transfer_encrypted_dynamic(**kwargs):
         mem_used_mb = end_mem - start_mem
 
         logging.info("==================================================")
-        logging.info("📊 TEZ PERFORMANS RAPORU (FERNET ŞİFRELEME - 50M)")
+        logging.info("📊 PERFORMANS RAPORU (FERNET ŞİFRELEME - 50M)")
         logging.info("==================================================")
         logging.info(f"Toplam Aktarılan Satır : {total_inserted}")
         logging.info(f"Kullanılan Batch Size  : {batch_size}")
