@@ -14,12 +14,9 @@ from cryptography.fernet import Fernet
 # -------------------------------------------------------------------------
 # ORTAK AIRFLOW VARIABLE TABANLI ANAHTAR YÖNETİMİ
 # -------------------------------------------------------------------------
-# 1M, 50m ve 50M DAG'larının tamamı Airflow kasasındaki ortak 'tez_encryption_key'
-# anahtarını kullanır. Bu sayede veriler aynı anahtarla çözülebilir (reversible) kalır.
 try:
     ENCRYPTION_KEY = Variable.get("tez_encryption_key")
 except Exception:
-    # Eğer Variable henüz tanımlanmamışsa tek bir seferlik üret ve kasaya kilitledi
     ENCRYPTION_KEY = Fernet.generate_key().decode('utf-8')
     Variable.set("tez_encryption_key", ENCRYPTION_KEY)
 
@@ -31,12 +28,10 @@ def encrypt_value(value):
     return cipher_suite.encrypt(str(value).encode('utf-8')).decode('utf-8')
 
 def transfer_encrypted_dynamic(**kwargs):
-    # Performans ölçümü başlangıcı
     process = psutil.Process(os.getpid())
     start_mem = process.memory_info().rss / (1024 * 1024)
     start_time = time.time()
         
-    # 1. Config'den batch_size al (yoksa 10000 kullan)
     dag_run = kwargs.get('dag_run')
     batch_size = 10000
     if dag_run and dag_run.conf and 'batch_size' in dag_run.conf:
@@ -47,22 +42,42 @@ def transfer_encrypted_dynamic(**kwargs):
     try:
         mongo_hook = MongoHook(conn_id='mongo_default')
         mongo_client = mongo_hook.get_conn()
-        mongo_collection = mongo_client["tez_source_db"]["customers_50m_raw"]
-                
+        
+        # 1. MongoDB Koleksiyon Kontrolü ve Esnek İsimlendirme
+        db = mongo_client["tez_source_db"]
+        existing_collections = db.list_collection_names()
+        logging.info(f"MongoDB 'tez_source_db' içindeki mevcut koleksiyonlar: {existing_collections}")
+
+        # Koleksiyon adını belirle (customers_50m_raw, customers_50M_raw veya customers_raw)
+        target_collection_name = "customers_50m_raw"
+        if target_collection_name not in existing_collections:
+            if "customers_50M_raw" in existing_collections:
+                target_collection_name = "customers_50M_raw"
+            elif "customers_raw" in existing_collections:
+                target_collection_name = "customers_raw"
+        
+        logging.info(f"Hedef Alınan MongoDB Koleksiyonu: {target_collection_name}")
+        mongo_collection = db[target_collection_name]
+        
+        # Koleksiyondaki toplam doküman sayısını logla
+        total_docs_in_mongo = mongo_collection.count_documents({})
+        logging.info(f"MongoDB Koleksiyonundaki Toplam Doküman Sayısı: {total_docs_in_mongo}")
+
+        if total_docs_in_mongo == 0:
+            logging.warning("⚠️ UYARI: Hedef MongoDB koleksiyonu tamamen BOŞ! Aktarım yapılmayacak.")
+
         postgres_hook = PostgresHook(postgres_conn_id='postgres_company_db')
         pg_conn = postgres_hook.get_conn()
         pg_cursor = pg_conn.cursor()
         
-        # =========================================================================
-        # PERFORMANS VE ÖN BELLEK STABİLİZASYON AYARLARI
-        # =========================================================================
+        # 2. PostgreSQL Performans Ayarları
         logging.info("PostgreSQL oturum parametreleri ayarlanıyor ve CHECKPOINT çalıştırılıyor...")
-        pg_cursor.execute("SET synchronous_commit = off;") # I/O darboğazını ölçüm için kararlı hale getirir
+        pg_cursor.execute("SET synchronous_commit = off;")
         pg_cursor.execute("SET work_mem = '512MB';")
-        pg_cursor.execute("CHECKPOINT;") # Eski log birikintilerini diske yazıp temizler
+        pg_cursor.execute("CHECKPOINT;")
         pg_conn.commit()
 
-        # 2. 50m Şemayı ve Tabloyu Otomatik Oluştur (Yoksa)
+        # 3. Şema ve Tablo Kontrolü
         logging.info("masked_50m şeması ve encrypted_50m_customers tablosu kontrol ediliyor/oluşturuluyor...")
         pg_cursor.execute("""
             CREATE SCHEMA IF NOT EXISTS masked_50m;
@@ -81,16 +96,15 @@ def transfer_encrypted_dynamic(**kwargs):
         """)
         pg_conn.commit()
 
-        # 3. Var olan eski verileri temizle
         logging.info("encrypted_50m_customers tablosu temizleniyor...")
         pg_cursor.execute("TRUNCATE TABLE masked_50m.encrypted_50m_customers;")
         pg_conn.commit()
 
-        mongo_cursor = mongo_collection.find()
+        # 4. 50M Optimizasyonu: batch_size ile okuma
+        mongo_cursor = mongo_collection.find(batch_size=batch_size)
         batch_data = []
         total_inserted = 0
 
-        # 4. Veri Aktarımı ve Şifreleme (Fernet AES-128)
         for doc in mongo_cursor:
             encrypted_record = (
                 str(doc.get('_id', '')),
@@ -130,7 +144,7 @@ def transfer_encrypted_dynamic(**kwargs):
         pg_cursor.close()
         pg_conn.close()
                 
-        # 5. Metrik Hesaplamaları ve Raporlama
+        # Raporlama
         end_time = time.time()
         end_mem = process.memory_info().rss / (1024 * 1024)
                 
@@ -152,7 +166,6 @@ def transfer_encrypted_dynamic(**kwargs):
         logging.error(f"50m Şifrelenmiş aktarım başarısız: {str(e)}")
         raise
 
-# DAG Ayarları
 default_args = {
     'owner': 'salih',
     'start_date': datetime(2026, 4, 25),
