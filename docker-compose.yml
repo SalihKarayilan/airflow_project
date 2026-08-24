@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # 1. AIRFLOW METADATA VERİTABANI (Eski dosyanın aynısı)
+  # 1. AIRFLOW METADATA VERİTABANI
   postgres:
     image: postgres:13
     container_name: airflow-postgres
@@ -14,7 +14,7 @@ services:
     networks:
       - airflow_network
 
-  # 2. KAYNAK VERİTABANI: YEREL MONGODB (Eski Atlas Kümesinin Yerine)
+  # 2. KAYNAK VERİTABANI: YEREL MONGODB
   mongo_source:
     image: mongo:latest
     container_name: local_mongo_cluster
@@ -25,7 +25,7 @@ services:
     networks:
       - airflow_network
 
-  # 3. HEDEF VERİTABANI: YEREL POSTGRESQL (Eski GCP Postgres Yerine)
+  # 3. HEDEF VERİTABANI: YEREL POSTGRESQL
   postgres_target:
     image: postgres:13
     container_name: local_postgres_dwh
@@ -34,7 +34,7 @@ services:
       POSTGRES_PASSWORD: airflow_pass
       POSTGRES_DB: company_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pg_postgres_target_data:/var/lib/postgresql/data
     networks:
@@ -56,7 +56,7 @@ services:
       - AIRFLOW_WWW_USER_PASSWORD=admin
       - AIRFLOW_WWW_USER_ROLE=Admin
       - AIRFLOW_WWW_USER_EMAIL=salih@hacettepe.edu.tr
-      # psutil ve cryptography tezdeki performans analizi ve şifreleme için eklendi
+      # dbt-postgres BURADAN SİLİNDİ
       - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mongo==4.1.0 faker apache-airflow-providers-postgres psutil cryptography
     command: bash -c "airflow db migrate && airflow users create --username admin --firstname Salih --lastname Karayilan --role Admin --email salih@hacettepe.edu.tr --password admin"
     networks:
@@ -68,16 +68,19 @@ services:
     container_name: airflow-webserver
     command: webserver
     ports:
-      - "8080:8080"
+      - "8085:8080"
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexgOOhDZni1UkKD3NmZj92RVWM3xcCg=
       - AIRFLOW__CORE__TEST_CONNECTION=Enabled
+      # dbt-postgres BURADAN SİLİNDİ
       - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mongo==4.1.0 faker apache-airflow-providers-postgres psutil cryptography
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
+      # dbt proje klasörü bağlandı
+      - C:/Users/SALIH/my_dwh_project:/opt/airflow/my_dwh_project
     depends_on:
       - airflow-init
     networks:
@@ -92,16 +95,19 @@ services:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__FERNET_KEY=46BKJoQYlPPOexgOOhDZni1UkKD3NmZj92RVWM3xcCg=
+      # dbt-postgres BURADAN SİLİNDİ
       - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-mongo==4.1.0 faker apache-airflow-providers-postgres psutil cryptography
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
+      # dbt proje klasörü bağlandı
+      - C:/Users/SALIH/my_dwh_project:/opt/airflow/my_dwh_project
     depends_on:
       - airflow-init
     networks:
       - airflow_network
 
-# Tüm konteynerlerin birbirleriyle isimleriyle (mongo_source vb.) konuşabilmesi için ortak ağ
+# Tüm konteynerlerin birbirleriyle isimleriyle konuşabilmesi için ortak ağ
 networks:
   airflow_network:
     driver: bridge
