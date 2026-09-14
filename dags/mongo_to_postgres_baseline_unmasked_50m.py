@@ -9,19 +9,29 @@ from airflow.providers.mongo.hooks.mongo import MongoHook
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from psycopg2.extras import execute_values
 
-def transfer_baseline_unmasked():
+# Fonksiyona **kwargs ekliyoruz (Params formundan gelen veriyi okumak için)
+def transfer_baseline_unmasked(**kwargs):
     # 1. Performans Takibi Başlangıç
     process = psutil.Process(os.getpid())
     start_mem = process.memory_info().rss / (1024 * 1024)
     start_time = time.time()
     
-    batch_size = 10000
+    # ---------------------------------------------------------
+    # DİNAMİK BATCH SIZE: AIRFLOW PARAMS (UI FORM)
+    # ---------------------------------------------------------
+    # UI formundan girilen değeri alır, girilmezse 10000 kullanır.
+    batch_size = int(kwargs.get('params', {}).get('batch_size', 10000))
+    
+    logging.info(f"🚀 50M Baseline DAG tetiklendi! Dinamik batch_size değeri: {batch_size}")
+    # ---------------------------------------------------------
     
     try:
         logging.info("Baseline 50M aktarımı için bağlantılar kuruluyor...")
         
         mongo_hook = MongoHook(conn_id='mongo_default')
         mongo_client = mongo_hook.get_conn()
+        
+        # DİKKAT: MongoDB'deki tam koleksiyon adının customers_50M_raw olduğundan emin ol.
         mongo_collection = mongo_client["tez_source_db"]["customers_50M_raw"]
         
         postgres_hook = PostgresHook(postgres_conn_id='postgres_company_db')
@@ -61,12 +71,14 @@ def transfer_baseline_unmasked():
         pg_cursor.execute("TRUNCATE TABLE masked_50m.unmasked_50m_customers;")
         pg_conn.commit()
 
-        mongo_cursor = mongo_collection.find()
+        # 4. 50M İÇİN EN KRİTİK OPTİMİZASYON: Cursor'a batch_size verildi
+        # Bu sayede 50 Milyon veri RAM'e tek seferde yığılmaz, paket paket okunur.
+        mongo_cursor = mongo_collection.find(batch_size=batch_size)
         
         batch_data = []
         total_inserted = 0
 
-        # 4. Veri Aktarımı (Maskeleme/Şifreleme YOK)
+        # 5. Veri Aktarımı (Maskeleme/Şifreleme YOK)
         for doc in mongo_cursor:
             raw_record = (
                 str(doc.get('_id', '')),
@@ -107,7 +119,7 @@ def transfer_baseline_unmasked():
         pg_cursor.close()
         pg_conn.close()
         
-        # 5. Performans Raporu Oluşturma
+        # 6. Performans Raporu Oluşturma
         end_time = time.time()
         end_mem = process.memory_info().rss / (1024 * 1024)
         
@@ -118,11 +130,12 @@ def transfer_baseline_unmasked():
         logging.info("==================================================")
         logging.info("📊 ANALİZ: BASELINE 50M (SIFIR GÜVENLİK MALİYETİ)")
         logging.info("==================================================")
-        logging.info(f"Hedef Tablo:     unmasked_50m_customers")
-        logging.info(f"Aktarılan Satır: {total_inserted}")
-        logging.info(f"Geçen Süre:      {duration:.2f} saniye")
+        logging.info(f"Hedef Tablo:      unmasked_50m_customers")
+        logging.info(f"Kullanılan Batch: {batch_size}")
+        logging.info(f"Aktarılan Satır:  {total_inserted}")
+        logging.info(f"Geçen Süre:       {duration:.2f} saniye")
         logging.info(f"Hız (Throughput): {throughput:.2f} satır/sn")
-        logging.info(f"RAM Kullanımı:   {mem_diff:.2f} MB")
+        logging.info(f"RAM Kullanımı:    {mem_diff:.2f} MB")
         logging.info("==================================================")
 
     except Exception as e:
@@ -140,10 +153,15 @@ with DAG(
     default_args=default_args,
     schedule_interval=None,
     catchup=False,
-    tags=['tez', 'unmasked', 'baseline', '50M']
+    tags=['tez', 'unmasked', 'baseline', '50M'],
+    # YENİ EKLENEN PARAMS BLOĞU: Arayüzde form oluşturur
+    params={
+        "batch_size": 10000
+    }
 ) as dag:
 
     transfer_task = PythonOperator(
         task_id='run_baseline_metrics',
-        python_callable=transfer_baseline_unmasked
+        python_callable=transfer_baseline_unmasked,
+        provide_context=True # kwargs'ın dolması için zorunludur!
     )

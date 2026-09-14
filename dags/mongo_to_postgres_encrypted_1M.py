@@ -29,23 +29,27 @@ def encrypt_value(value):
         return value
     return cipher_suite.encrypt(str(value).encode('utf-8')).decode('utf-8')
 
+# Fonksiyona **kwargs ekliyoruz (Params formundan veriyi okumak için)
 def transfer_encrypted_dynamic(**kwargs):
     # Performans ölçümü başlangıcı
     process = psutil.Process(os.getpid())
     start_mem = process.memory_info().rss / (1024 * 1024)
     start_time = time.time()
         
-    # 1. Config'den batch_size al (yoksa 10000 kullan)
-    dag_run = kwargs.get('dag_run')
-    batch_size = 10000
-    if dag_run and dag_run.conf and 'batch_size' in dag_run.conf:
-        batch_size = dag_run.conf['batch_size']
+    # ---------------------------------------------------------
+    # DİNAMİK BATCH SIZE: AIRFLOW PARAMS (UI FORM)
+    # ---------------------------------------------------------
+    # UI formundan girilen değeri alır, girilmezse 10000 kullanır.
+    batch_size = int(kwargs.get('params', {}).get('batch_size', 10000))
     
-    logging.info(f"Dinamik batch_size kullanılıyor: {batch_size}")
+    logging.info(f"🚀 1M Şifrelenmiş DAG tetiklendi! Dinamik batch_size değeri: {batch_size}")
+    # ---------------------------------------------------------
 
     try:
         mongo_hook = MongoHook(conn_id='mongo_default')
         mongo_client = mongo_hook.get_conn()
+        
+        # Koleksiyon adının doğruluğuna emin olun
         mongo_collection = mongo_client["tez_source_db"]["customers_raw"]
                 
         postgres_hook = PostgresHook(postgres_conn_id='postgres_company_db')
@@ -85,11 +89,13 @@ def transfer_encrypted_dynamic(**kwargs):
         pg_cursor.execute("TRUNCATE TABLE masked_1m.encrypted_1m_customers;")
         pg_conn.commit()
 
-        mongo_cursor = mongo_collection.find()
+        # 4. RAM Optimizasyonu: Cursor'a batch_size verildi
+        mongo_cursor = mongo_collection.find(batch_size=batch_size)
+        
         batch_data = []
         total_inserted = 0
 
-        # 4. Veri Aktarımı ve Şifreleme (Fernet AES-128)
+        # 5. Veri Aktarımı ve Şifreleme (Fernet AES-128)
         for doc in mongo_cursor:
             encrypted_record = (
                 str(doc.get('_id', '')),
@@ -129,7 +135,7 @@ def transfer_encrypted_dynamic(**kwargs):
         pg_cursor.close()
         pg_conn.close()
                 
-        # 5. Metrik Hesaplamaları ve Raporlama
+        # 6. Metrik Hesaplamaları ve Raporlama
         end_time = time.time()
         end_mem = process.memory_info().rss / (1024 * 1024)
                 
@@ -162,11 +168,15 @@ with DAG(
     default_args=default_args,
     schedule_interval=None,
     catchup=False,
-    tags=['tez', 'encrypted', 'fernet', '1M']
+    tags=['tez', 'encrypted', 'fernet', '1M'],
+    # YENİ EKLENEN PARAMS BLOĞU: Arayüzde form oluşturur
+    params={
+        "batch_size": 10000
+    }
 ) as dag:
 
     transfer_task = PythonOperator(
         task_id='run_encrypted_metrics_1m',
         python_callable=transfer_encrypted_dynamic,
-        provide_context=True
+        provide_context=True # kwargs'ın dolması için zorunludur!
     )

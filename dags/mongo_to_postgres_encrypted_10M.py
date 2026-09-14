@@ -12,14 +12,11 @@ from psycopg2.extras import execute_values
 from cryptography.fernet import Fernet
 
 # -------------------------------------------------------------------------
-# ORTAK AIRFLOW VARIABLE TABANLI ANAHTAR YÖNETİMİ
+# SABİT VEYA AIRFLOW VARIABLE TABANLI ANAHTAR YÖNETİMİ
 # -------------------------------------------------------------------------
-# 1M, 10M ve 50M DAG'larının tamamı Airflow kasasındaki ortak 'tez_encryption_key'
-# anahtarını kullanır. Bu sayede veriler aynı anahtarla çözülebilir (reversible) kalır.
 try:
     ENCRYPTION_KEY = Variable.get("tez_encryption_key")
 except Exception:
-    # Eğer Variable henüz tanımlanmamışsa tek bir seferlik üret ve kasaya kilitledi
     ENCRYPTION_KEY = Fernet.generate_key().decode('utf-8')
     Variable.set("tez_encryption_key", ENCRYPTION_KEY)
 
@@ -30,24 +27,28 @@ def encrypt_value(value):
         return value
     return cipher_suite.encrypt(str(value).encode('utf-8')).decode('utf-8')
 
+# Fonksiyona **kwargs ekliyoruz (Params formundan veriyi okumak için)
 def transfer_encrypted_dynamic(**kwargs):
     # Performans ölçümü başlangıcı
     process = psutil.Process(os.getpid())
     start_mem = process.memory_info().rss / (1024 * 1024)
     start_time = time.time()
         
-    # 1. Config'den batch_size al (yoksa 10000 kullan)
-    dag_run = kwargs.get('dag_run')
-    batch_size = 10000
-    if dag_run and dag_run.conf and 'batch_size' in dag_run.conf:
-        batch_size = dag_run.conf['batch_size']
+    # ---------------------------------------------------------
+    # DİNAMİK BATCH SIZE: AIRFLOW PARAMS (UI FORM)
+    # ---------------------------------------------------------
+    # UI formundan girilen değeri alır, girilmezse 10000 kullanır.
+    batch_size = int(kwargs.get('params', {}).get('batch_size', 10000))
     
-    logging.info(f"Dinamik batch_size kullanılıyor: {batch_size}")
+    logging.info(f"🚀 10M Şifrelenmiş DAG tetiklendi! Dinamik batch_size değeri: {batch_size}")
+    # ---------------------------------------------------------
 
     try:
         mongo_hook = MongoHook(conn_id='mongo_default')
         mongo_client = mongo_hook.get_conn()
-        mongo_collection = mongo_client["tez_source_db"]["customers_10M_raw"]
+        
+        # Koleksiyon adının doğruluğuna emin olun (Örn: customers_10m_raw veya customers_raw)
+        mongo_collection = mongo_client["tez_source_db"]["customers_10m_raw"]
                 
         postgres_hook = PostgresHook(postgres_conn_id='postgres_company_db')
         pg_conn = postgres_hook.get_conn()
@@ -62,7 +63,7 @@ def transfer_encrypted_dynamic(**kwargs):
         pg_cursor.execute("CHECKPOINT;") # Eski log birikintilerini diske yazıp temizler
         pg_conn.commit()
 
-        # 2. 10M Şemayı ve Tabloyu Otomatik Oluştur (Yoksa)
+        # 2. Şema ve Tabloyu Otomatik Oluştur (Yoksa)
         logging.info("masked_10m şeması ve encrypted_10m_customers tablosu kontrol ediliyor/oluşturuluyor...")
         pg_cursor.execute("""
             CREATE SCHEMA IF NOT EXISTS masked_10m;
@@ -86,11 +87,13 @@ def transfer_encrypted_dynamic(**kwargs):
         pg_cursor.execute("TRUNCATE TABLE masked_10m.encrypted_10m_customers;")
         pg_conn.commit()
 
-        mongo_cursor = mongo_collection.find()
+        # 4. RAM Optimizasyonu: 10M veri için Cursor'a batch_size verildi
+        mongo_cursor = mongo_collection.find(batch_size=batch_size)
+        
         batch_data = []
         total_inserted = 0
 
-        # 4. Veri Aktarımı ve Şifreleme (Fernet AES-128)
+        # 5. Veri Aktarımı ve Şifreleme (Fernet AES-128)
         for doc in mongo_cursor:
             encrypted_record = (
                 str(doc.get('_id', '')),
@@ -130,7 +133,7 @@ def transfer_encrypted_dynamic(**kwargs):
         pg_cursor.close()
         pg_conn.close()
                 
-        # 5. Metrik Hesaplamaları ve Raporlama
+        # 6. Metrik Hesaplamaları ve Raporlama
         end_time = time.time()
         end_mem = process.memory_info().rss / (1024 * 1024)
                 
@@ -163,11 +166,15 @@ with DAG(
     default_args=default_args,
     schedule_interval=None,
     catchup=False,
-    tags=['tez', 'encrypted', 'fernet', '10M']
+    tags=['tez', 'encrypted', 'fernet', '10M'],
+    # YENİ EKLENEN PARAMS BLOĞU: Arayüzde form oluşturur
+    params={
+        "batch_size": 10000
+    }
 ) as dag:
 
     transfer_task = PythonOperator(
         task_id='run_encrypted_metrics_10m',
         python_callable=transfer_encrypted_dynamic,
-        provide_context=True
+        provide_context=True # kwargs'ın dolması için zorunludur!
     )

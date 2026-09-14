@@ -9,13 +9,21 @@ from airflow.providers.mongo.hooks.mongo import MongoHook
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from psycopg2.extras import execute_values
 
-def transfer_baseline_unmasked():
+# Fonksiyona **kwargs ekliyoruz çünkü 'params' verisi kwargs üzerinden gelir
+def transfer_baseline_unmasked(**kwargs):
     # 1. Performans Takibi Başlangıç
     process = psutil.Process(os.getpid())
     start_mem = process.memory_info().rss / (1024 * 1024)
     start_time = time.time()
     
-    batch_size = 10000
+    # ---------------------------------------------------------
+    # DİNAMİK BATCH SIZE: AIRFLOW PARAMS (UI FORM)
+    # ---------------------------------------------------------
+    # Eğer UI'dan bir değer girilmezse veya manuel tetiklenmezse varsayılan 10000 alınır
+    batch_size = int(kwargs.get('params', {}).get('batch_size', 10000))
+    
+    logging.info(f"🚀 DAG tetiklendi! Dinamik batch_size değeri: {batch_size}")
+    # ---------------------------------------------------------
     
     try:
         logging.info("Baseline aktarımı için bağlantılar kuruluyor...")
@@ -38,7 +46,7 @@ def transfer_baseline_unmasked():
         pg_conn.commit()
 
         # 2. Şema ve Tabloyu Otomatik Oluştur (Yoksa)
-        logging.info("Şema ve tablo varlığı kontrol ediliyor/oluşturuluyor...")
+        logging.info("masked_1m şeması ve tablo varlığı kontrol ediliyor/oluşturuluyor...")
         pg_cursor.execute("""
             CREATE SCHEMA IF NOT EXISTS masked_1m;
             
@@ -61,7 +69,8 @@ def transfer_baseline_unmasked():
         pg_cursor.execute("TRUNCATE TABLE masked_1m.unmasked_1m_customers;")
         pg_conn.commit()
 
-        mongo_cursor = mongo_collection.find()
+        # Performans artışı için Mongo okumasında da batch_size uygulanıyor
+        mongo_cursor = mongo_collection.find(batch_size=batch_size)
         
         batch_data = []
         total_inserted = 0
@@ -116,13 +125,14 @@ def transfer_baseline_unmasked():
         mem_diff = end_mem - start_mem
 
         logging.info("==================================================")
-        logging.info("📊 ANALİZ : BASELINE (SIFIR GÜVENLİK MALİYETİ)")
+        logging.info("📊 TEZ ANALİZİ: BASELINE 1M (SIFIR GÜVENLİK MALİYETİ)")
         logging.info("==================================================")
-        logging.info(f"Hedef Tablo:     unmasked_1m_customers")
-        logging.info(f"Aktarılan Satır: {total_inserted}")
-        logging.info(f"Geçen Süre:      {duration:.2f} saniye")
+        logging.info(f"Hedef Tablo:      unmasked_1m_customers")
+        logging.info(f"Kullanılan Batch: {batch_size}")
+        logging.info(f"Aktarılan Satır:  {total_inserted}")
+        logging.info(f"Geçen Süre:       {duration:.2f} saniye")
         logging.info(f"Hız (Throughput): {throughput:.2f} satır/sn")
-        logging.info(f"RAM Kullanımı:   {mem_diff:.2f} MB")
+        logging.info(f"RAM Kullanımı:    {mem_diff:.2f} MB")
         logging.info("==================================================")
 
     except Exception as e:
@@ -140,10 +150,15 @@ with DAG(
     default_args=default_args,
     schedule_interval=None,
     catchup=False,
-    tags=['tez', 'unmasked', 'baseline']
+    tags=['tez', 'unmasked', 'baseline', '1M'],
+    # YENİ EKLENEN PARAMS BLOĞU: Arayüzde form oluşturur
+    params={
+        "batch_size": 10000
+    }
 ) as dag:
 
     transfer_task = PythonOperator(
         task_id='run_baseline_metrics',
-        python_callable=transfer_baseline_unmasked
+        python_callable=transfer_baseline_unmasked,
+        provide_context=True # kwargs'ın dolması için zorunludur!
     )
