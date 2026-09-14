@@ -1,33 +1,29 @@
-# Apache Airflow Destekli ETL Süreçlerinde Dinamik Veri Maskeleme ve Pseudonymisation Uygulamaları
+# Airflow ETL: MongoDB to PostgreSQL Data Transfer & Encryption Benchmarking
 
-Bu depo, büyük veri mimarilerinde KVKK ve GDPR uyumluluğunu sağlamak amacıyla tasarlanmış, **Apache Airflow** orkestrasyonunda çalışan uçtan uca güvenli bir ETL (Extract-Transform-Load) boru hattı projesini içermektedir. 
+This project is a robust Data Engineering pipeline orchestrated by **Apache Airflow**, designed to measure and benchmark the performance overhead of data encryption during large-scale ETL processes. It simulates migrating raw customer records (1M, 10M, and 50M rows) from **MongoDB** to **PostgreSQL**[cite: 1, 2, 3]. 
 
-Çalışma, Hacettepe Üniversitesi Bilişim Enstitüsü, Veri ve Bilgi Mühendisliği Tezsiz Yüksek Lisans Programı kapsamında Dönem Projesi olarak geliştirilmiştir.
+The project evaluates two main scenarios for academic and analytical purposes:
+1. **Baseline Transfer:** Direct, unmasked data ingestion to measure raw I/O throughput and baseline memory usage.
+2. **Encrypted Transfer:** On-the-fly data encryption using **Fernet (AES-128)** to measure the exact computational cost (time and RAM) of securing sensitive PII data during transit.
 
-## 🚀 Proje Özeti
-Modern veri ambarı sistemlerinde hassas kişisel verilerin (PII) transferi esnasında güvenliğini sağlamak için iki temel strateji uygulanmış ve performans maliyetleri analiz edilmiştir:
-1. **Dinamik Veri Maskeleme (DDM):** Rol tabanlı (admin, analyst vb.) kurallarla bellek üzerinde (in-memory) anlık veri gizleme.
-2. **Kriptografik Takma Adlandırma (Pseudonymisation):** Airflow Variables entegrasyonu ile merkezi anahtar yönetimi kullanan AES-128 tabanlı Fernet şifreleme mimarisi.
+## 🚀 Key Features
 
-Sistem; 1 Milyon, 10 Milyon ve 50 Milyon satırlık devasa veri kümeleri (MongoDB'den PostgreSQL'e) üzerinde test edilmiş ve algoritmaların işlemci (vCPU), RAM ve aktarım hızı (throughput) üzerindeki etkileri deneysel olarak ölçülmüştür.
+* **Automated Data Generation:** Includes seed DAGs that use the `Faker` library (Turkish locale) to populate MongoDB with 1M, 10M, or 50M synthetic customer records[cite: 7, 8, 9].
+* **Dynamic Scaling:** Custom DAGs optimized for handling different data volume tiers seamlessly with dynamic batch sizing (default 10,000 rows/batch)[cite: 1, 2, 3].
+* **Performance Monitoring:** In-built `psutil` tracking logs total elapsed time, rows processed per second (throughput), and exact RAM consumption differences directly into Airflow logs[cite: 1, 4].
+* **Fully Containerized:** The entire infrastructure (Airflow LocalExecutor, MongoDB source, PostgreSQL target) is containerized via Docker Compose for one-click deployment.
 
-## 🏗️ Mimari ve Teknolojiler
+## 🛠️ Tech Stack
 
-* **Orkestrasyon:** Apache Airflow 2.10
-* **Kaynak Veritabanı:** MongoDB (Distribütif NoSQL Küme Simülasyonu)
-* **Hedef Veri Ambarı:** PostgreSQL 13 (İlişkisel DWH)
-* **Kriptografi:** Python `cryptography` (Fernet)
-* **Altyapı:** Docker & Docker Compose (İzole Ağ Mimarisi)
-* **Veri Üretimi:** Python `Faker` kütüphanesi
+* **Orchestration:** Apache Airflow 2.10.4 (LocalExecutor)
+* **Source Database:** MongoDB
+* **Target Database:** PostgreSQL 13
+* **Language & Libraries:** Python 3, `psycopg2`, `faker`, `cryptography` (Fernet), `psutil`[cite: 10]
+* **Infrastructure:** Docker & Docker Compose[cite: 10]
 
-## ⚙️ Kurulum ve Çalıştırma
+## ⚙️ Installation & Setup
 
-Projeyi yerel ortamınızda çalıştırmak için aşağıdaki adımları izleyin:
-
-### 1. Sistem Gereksinimleri ve Kaynak Optimizasyonu
-Özellikle 50 Milyonluk veri setinde OOM (Out-of-Memory) hatalarını önlemek için WSL2 (Windows Subsystem for Linux) kaynaklarını sabitlemeniz önerilir. Kullanıcı dizininizde (`~/.wslconfig`) aşağıdaki yapılandırmayı oluşturun:
-```ini
-[wsl2]
-memory=10GB
-processors=4
-swap=2GB
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/SalihKarayilan/airflow_project.git](https://github.com/SalihKarayilan/airflow_project.git)
+   cd airflow_project
