@@ -1,6 +1,6 @@
 # Airflow ETL: MongoDB to PostgreSQL Data Transfer & Encryption Benchmarking
 
-This project is a robust Data Engineering pipeline orchestrated by **Apache Airflow**, designed to measure and benchmark the performance overhead of data encryption during large-scale ETL processes. It simulates migrating raw customer records (1M, 10M, and 50M rows) from **MongoDB** to **PostgreSQL**[cite: 1, 2, 3]. 
+This project is a robust Data Engineering pipeline orchestrated by **Apache Airflow**, designed to measure and benchmark the performance overhead of data encryption during large-scale ETL processes. It simulates migrating raw customer records (1M, 10M, and 50M rows) from **MongoDB** to **PostgreSQL**. 
 
 The project evaluates two main scenarios for academic and analytical purposes:
 1. **Baseline Transfer:** Direct, unmasked data ingestion to measure raw I/O throughput and baseline memory usage.
@@ -8,9 +8,9 @@ The project evaluates two main scenarios for academic and analytical purposes:
 
 ## 🚀 Key Features
 
-* **Automated Data Generation:** Includes seed DAGs that use the `Faker` library (Turkish locale) to populate MongoDB with 1M, 10M, or 50M synthetic customer records[cite: 7, 8, 9].
-* **Dynamic Scaling:** Custom DAGs optimized for handling different data volume tiers seamlessly with dynamic batch sizing (default 10,000 rows/batch)[cite: 1, 2, 3].
-* **Performance Monitoring:** In-built `psutil` tracking logs total elapsed time, rows processed per second (throughput), and exact RAM consumption differences directly into Airflow logs[cite: 1, 4].
+* **Automated Data Generation:** Includes seed DAGs that use the `Faker` library (Turkish locale) to populate MongoDB with 1M, 10M, or 50M synthetic customer records.
+* **Dynamic Scaling:** Custom DAGs optimized for handling different data volume tiers seamlessly with dynamic batch sizing (default 10,000 rows/batch).
+* **Performance Monitoring:** In-built `psutil` tracking logs total elapsed time, rows processed per second (throughput), and exact RAM consumption differences directly into Airflow logs.
 * **Fully Containerized:** The entire infrastructure (Airflow LocalExecutor, MongoDB source, PostgreSQL target) is containerized via Docker Compose for one-click deployment.
 
 ## 🛠️ Tech Stack
@@ -18,8 +18,8 @@ The project evaluates two main scenarios for academic and analytical purposes:
 * **Orchestration:** Apache Airflow 2.10.4 (LocalExecutor)
 * **Source Database:** MongoDB
 * **Target Database:** PostgreSQL 13
-* **Language & Libraries:** Python 3, `psycopg2`, `faker`, `cryptography` (Fernet), `psutil`[cite: 10]
-* **Infrastructure:** Docker & Docker Compose[cite: 10]
+* **Language & Libraries:** Python 3, `psycopg2`, `faker`, `cryptography` (Fernet), `psutil`
+* **Infrastructure:** Docker & Docker Compose
 
 ## ⚙️ Installation & Setup
 
