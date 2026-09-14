@@ -27,9 +27,7 @@ def encrypt_value(value):
         return value
     return cipher_suite.encrypt(str(value).encode('utf-8')).decode('utf-8')
 
-# Fonksiyona **kwargs ekliyoruz (Params formundan veriyi okumak için)
 def transfer_encrypted_dynamic(**kwargs):
-    # Performans ölçümü başlangıcı
     process = psutil.Process(os.getpid())
     start_mem = process.memory_info().rss / (1024 * 1024)
     start_time = time.time()
@@ -37,33 +35,37 @@ def transfer_encrypted_dynamic(**kwargs):
     # ---------------------------------------------------------
     # DİNAMİK BATCH SIZE: AIRFLOW PARAMS (UI FORM)
     # ---------------------------------------------------------
-    # UI formundan girilen değeri alır, girilmezse 10000 kullanır.
     batch_size = int(kwargs.get('params', {}).get('batch_size', 10000))
-    
     logging.info(f"🚀 10M Şifrelenmiş DAG tetiklendi! Dinamik batch_size değeri: {batch_size}")
-    # ---------------------------------------------------------
-
+    
     try:
         mongo_hook = MongoHook(conn_id='mongo_default')
         mongo_client = mongo_hook.get_conn()
         
-        # Koleksiyon adının doğruluğuna emin olun (Örn: customers_10m_raw veya customers_raw)
-        mongo_collection = mongo_client["tez_source_db"]["customers_10m_raw"]
+        # 1. MongoDB Koleksiyon Bağlantısı (Sabit Büyük 'M' ile)
+        # Görseldeki ismin BİREBİR aynısı kullanıldı.
+        mongo_collection = mongo_client["tez_source_db"]["customers_10M_raw"]
+        
+        # Koleksiyondaki toplam doküman sayısını kontrol et
+        total_docs_in_mongo = mongo_collection.count_documents({})
+        logging.info(f"MongoDB Koleksiyonundaki Toplam Doküman Sayısı: {total_docs_in_mongo}")
+
+        if total_docs_in_mongo == 0:
+            logging.error("HATA: Hedef MongoDB koleksiyonu BOŞ veya bağlanılamadı!")
+            raise ValueError("Koleksiyon boş veya bulunamadı.")
                 
         postgres_hook = PostgresHook(postgres_conn_id='postgres_company_db')
         pg_conn = postgres_hook.get_conn()
         pg_cursor = pg_conn.cursor()
         
-        # =========================================================================
-        # PERFORMANS VE ÖN BELLEK STABİLİZASYON AYARLARI
-        # =========================================================================
+        # 2. PostgreSQL Performans Ayarları
         logging.info("PostgreSQL oturum parametreleri ayarlanıyor ve CHECKPOINT çalıştırılıyor...")
-        pg_cursor.execute("SET synchronous_commit = off;") # I/O darboğazını ölçüm için kararlı hale getirir
+        pg_cursor.execute("SET synchronous_commit = off;")
         pg_cursor.execute("SET work_mem = '512MB';")
-        pg_cursor.execute("CHECKPOINT;") # Eski log birikintilerini diske yazıp temizler
+        pg_cursor.execute("CHECKPOINT;")
         pg_conn.commit()
 
-        # 2. Şema ve Tabloyu Otomatik Oluştur (Yoksa)
+        # 3. Şema ve Tabloyu Otomatik Oluştur
         logging.info("masked_10m şeması ve encrypted_10m_customers tablosu kontrol ediliyor/oluşturuluyor...")
         pg_cursor.execute("""
             CREATE SCHEMA IF NOT EXISTS masked_10m;
@@ -82,18 +84,17 @@ def transfer_encrypted_dynamic(**kwargs):
         """)
         pg_conn.commit()
 
-        # 3. Var olan eski verileri temizle
+        # 4. Var olan eski verileri temizle
         logging.info("encrypted_10m_customers tablosu temizleniyor...")
         pg_cursor.execute("TRUNCATE TABLE masked_10m.encrypted_10m_customers;")
         pg_conn.commit()
 
-        # 4. RAM Optimizasyonu: 10M veri için Cursor'a batch_size verildi
-        mongo_cursor = mongo_collection.find(batch_size=batch_size)
-        
+        # 5. Veri Aktarımı ve Şifreleme (Fernet AES-128)
+        # 10M okuma optimizasyonu: no_cursor_timeout=True eklendi.
+        mongo_cursor = mongo_collection.find(batch_size=batch_size, no_cursor_timeout=True)
         batch_data = []
         total_inserted = 0
 
-        # 5. Veri Aktarımı ve Şifreleme (Fernet AES-128)
         for doc in mongo_cursor:
             encrypted_record = (
                 str(doc.get('_id', '')),
@@ -130,6 +131,8 @@ def transfer_encrypted_dynamic(**kwargs):
             pg_conn.commit()
             total_inserted += len(batch_data)
 
+        # Cursor'ı manuel kapat (no_cursor_timeout kullandığımız için zorunlu)
+        mongo_cursor.close()
         pg_cursor.close()
         pg_conn.close()
                 
@@ -167,7 +170,6 @@ with DAG(
     schedule_interval=None,
     catchup=False,
     tags=['tez', 'encrypted', 'fernet', '10M'],
-    # YENİ EKLENEN PARAMS BLOĞU: Arayüzde form oluşturur
     params={
         "batch_size": 10000
     }
@@ -176,5 +178,5 @@ with DAG(
     transfer_task = PythonOperator(
         task_id='run_encrypted_metrics_10m',
         python_callable=transfer_encrypted_dynamic,
-        provide_context=True # kwargs'ın dolması için zorunludur!
+        provide_context=True
     )

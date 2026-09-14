@@ -27,7 +27,6 @@ def encrypt_value(value):
         return value
     return cipher_suite.encrypt(str(value).encode('utf-8')).decode('utf-8')
 
-# Fonksiyona **kwargs ekliyoruz (Params formundan veriyi okumak için)
 def transfer_encrypted_dynamic(**kwargs):
     process = psutil.Process(os.getpid())
     start_mem = process.memory_info().rss / (1024 * 1024)
@@ -36,7 +35,6 @@ def transfer_encrypted_dynamic(**kwargs):
     # ---------------------------------------------------------
     # DİNAMİK BATCH SIZE: AIRFLOW PARAMS (UI FORM)
     # ---------------------------------------------------------
-    # UI formundan girilen değeri alır, girilmezse 10000 kullanır.
     batch_size = int(kwargs.get('params', {}).get('batch_size', 10000))
     
     logging.info(f"🚀 50M Şifrelenmiş DAG tetiklendi! Dinamik batch_size değeri: {batch_size}")
@@ -46,28 +44,17 @@ def transfer_encrypted_dynamic(**kwargs):
         mongo_hook = MongoHook(conn_id='mongo_default')
         mongo_client = mongo_hook.get_conn()
         
-        # 1. MongoDB Koleksiyon Kontrolü ve Esnek İsimlendirme
-        db = mongo_client["tez_source_db"]
-        existing_collections = db.list_collection_names()
-        logging.info(f"MongoDB 'tez_source_db' içindeki mevcut koleksiyonlar: {existing_collections}")
-
-        # Koleksiyon adını belirle (customers_50m_raw, customers_50M_raw veya customers_raw)
-        target_collection_name = "customers_50m_raw"
-        if target_collection_name not in existing_collections:
-            if "customers_50M_raw" in existing_collections:
-                target_collection_name = "customers_50M_raw"
-            elif "customers_raw" in existing_collections:
-                target_collection_name = "customers_raw"
+        # 1. MongoDB Koleksiyon Bağlantısı (Sabit Büyük 'M' ile)
+        # Ekran görüntüsündeki ismin BİREBİR aynısı kullanıldı.
+        mongo_collection = mongo_client["tez_source_db"]["customers_50M_raw"]
         
-        logging.info(f"Hedef Alınan MongoDB Koleksiyonu: {target_collection_name}")
-        mongo_collection = db[target_collection_name]
-        
-        # Koleksiyondaki toplam doküman sayısını logla
+        # Koleksiyondaki toplam doküman sayısını kontrol et
         total_docs_in_mongo = mongo_collection.count_documents({})
         logging.info(f"MongoDB Koleksiyonundaki Toplam Doküman Sayısı: {total_docs_in_mongo}")
 
         if total_docs_in_mongo == 0:
-            logging.warning("⚠️ UYARI: Hedef MongoDB koleksiyonu tamamen BOŞ! Aktarım yapılmayacak.")
+            logging.error("HATA: Hedef MongoDB koleksiyonu BOŞ veya bağlanılamadı!")
+            raise ValueError("Koleksiyon boş veya bulunamadı.")
 
         postgres_hook = PostgresHook(postgres_conn_id='postgres_company_db')
         pg_conn = postgres_hook.get_conn()
@@ -103,8 +90,9 @@ def transfer_encrypted_dynamic(**kwargs):
         pg_cursor.execute("TRUNCATE TABLE masked_50m.encrypted_50m_customers;")
         pg_conn.commit()
 
-        # 4. 50M Optimizasyonu: RAM şişmesini önlemek için Cursor'a batch_size verildi
-        mongo_cursor = mongo_collection.find(batch_size=batch_size)
+        # 4. 50M Optimizasyonu: Cursor Timeout Devre Dışı Bırakıldı
+        # 50 Milyon satırın şifrelenmesi uzun süreceği için MongoDB'nin bağlantıyı koparması engellendi.
+        mongo_cursor = mongo_collection.find(batch_size=batch_size, no_cursor_timeout=True)
         batch_data = []
         total_inserted = 0
 
@@ -145,6 +133,8 @@ def transfer_encrypted_dynamic(**kwargs):
             pg_conn.commit()
             total_inserted += len(batch_data)
 
+        # Cursor manuel olarak kapatıldı (no_cursor_timeout kullanıldığında zorunludur)
+        mongo_cursor.close()
         pg_cursor.close()
         pg_conn.close()
                 
@@ -167,7 +157,7 @@ def transfer_encrypted_dynamic(**kwargs):
         logging.info("==================================================")
 
     except Exception as e:
-        logging.error(f"50m Şifrelenmiş aktarım başarısız: {str(e)}")
+        logging.error(f"50M Şifrelenmiş aktarım başarısız: {str(e)}")
         raise
 
 default_args = {
@@ -181,7 +171,6 @@ with DAG(
     schedule_interval=None,
     catchup=False,
     tags=['tez', 'encrypted', 'fernet', '50M'],
-    # YENİ EKLENEN PARAMS BLOĞU: Arayüzde form oluşturur
     params={
         "batch_size": 10000
     }
@@ -190,5 +179,5 @@ with DAG(
     transfer_task = PythonOperator(
         task_id='run_encrypted_metrics_50m',
         python_callable=transfer_encrypted_dynamic,
-        provide_context=True # kwargs'ın dolması için zorunludur!
+        provide_context=True
     )
